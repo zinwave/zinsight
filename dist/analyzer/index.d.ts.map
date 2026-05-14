@@ -1,0 +1,1 @@
+{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../../src/analyzer/index.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,cAAc,EAAsC,MAAM,UAAU,CAAC;AA8BnF,UAAU,gBAAgB;IACxB,CAAC,OAAO,EAAE,MAAM,GAAG,IAAI,CAAC;CACzB;AAED,wBAAgB,OAAO,CAAC,OAAO,EAAE,MAAM,EAAE,UAAU,CAAC,EAAE,gBAAgB,GAAG,cAAc,CA2OtF"}

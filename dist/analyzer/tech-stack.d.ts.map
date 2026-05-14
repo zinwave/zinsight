@@ -1,0 +1,1 @@
+{"version":3,"file":"tech-stack.d.ts","sourceRoot":"","sources":["../../src/analyzer/tech-stack.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,SAAS,EAAE,MAAM,UAAU,CAAC;AAmI1C,wBAAgB,eAAe,CAAC,OAAO,EAAE,MAAM,EAAE,UAAU,EAAE,MAAM,EAAE,EAAE,aAAa,CAAC,EAAE,GAAG,CAAC,MAAM,CAAC,GAAG,SAAS,CA0I7G;AAUD,wBAAgB,UAAU,CAAC,OAAO,EAAE,MAAM,GAAG,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,CAOlE"}

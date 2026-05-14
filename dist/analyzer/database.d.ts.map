@@ -1,0 +1,1 @@
+{"version":3,"file":"database.d.ts","sourceRoot":"","sources":["../../src/analyzer/database.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,IAAI,IAAI,OAAO,EAAE,MAAM,cAAc,CAAC;AACpD,OAAO,KAAK,EAAE,kBAAkB,EAAoD,MAAM,UAAU,CAAC;AA6GrG,wBAAgB,eAAe,CAC7B,KAAK,EAAE,GAAG,CAAC,MAAM,EAAE,OAAO,GAAG,IAAI,CAAC,EAClC,WAAW,EAAE,MAAM,CAAC,MAAM,EAAE,MAAM,CAAC,GAClC,kBAAkB,EAAE,CA+EtB"}

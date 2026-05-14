@@ -1,0 +1,162 @@
+name: 'Zinsight Architecture Doc'
+description: 'Generate ARCHITECTURE.md for any JS/TS codebase via static analysis. No AI, no signup, no source code uploaded.'
+author: 'Zinwave Innovations'
+
+branding:
+  icon: 'book-open'
+  color: 'purple'
+
+inputs:
+  output:
+    description: 'Output path for the generated markdown (relative to repo root).'
+    required: false
+    default: 'ARCHITECTURE.md'
+  root:
+    description: 'Project root directory to analyse (relative to repo root).'
+    required: false
+    default: '.'
+  version:
+    description: 'Pin a specific zinsight version (npm version string, "latest" by default).'
+    required: false
+    default: 'latest'
+  commit:
+    description: 'If "true", commit and push the generated doc when it has changed.'
+    required: false
+    default: 'false'
+  commit-message:
+    description: 'Commit message used when commit=true.'
+    required: false
+    default: 'docs: regenerate ARCHITECTURE.md [zinsight]'
+  commit-user-name:
+    description: 'Git user.name for the commit.'
+    required: false
+    default: 'github-actions[bot]'
+  commit-user-email:
+    description: 'Git user.email for the commit.'
+    required: false
+    default: 'github-actions[bot]@users.noreply.github.com'
+  pr-comment:
+    description: 'If "true", post a summary diff as a comment on the triggering PR.'
+    required: false
+    default: 'false'
+  fail-on-no-output:
+    description: 'If "true", fail the workflow when zinsight produces no output file.'
+    required: false
+    default: 'true'
+
+outputs:
+  output-path:
+    description: 'Absolute path to the generated markdown file.'
+    value: ${{ steps.run.outputs.output-path }}
+  changed:
+    description: '"true" if the generated doc differs from the version on disk before this run.'
+    value: ${{ steps.run.outputs.changed }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Verify Node.js is available
+      shell: bash
+      run: |
+        if ! command -v node >/dev/null 2>&1; then
+          echo "::error::Node.js is required. Add a `actions/setup-node@v4` step before this action."
+          exit 1
+        fi
+        node --version
+
+    - name: Run zinsight
+      id: run
+      shell: bash
+      env:
+        ZINSIGHT_VERSION: ${{ inputs.version }}
+        ZINSIGHT_ROOT: ${{ inputs.root }}
+        ZINSIGHT_OUTPUT: ${{ inputs.output }}
+        FAIL_ON_NO_OUTPUT: ${{ inputs.fail-on-no-output }}
+      run: |
+        set -euo pipefail
+
+        echo "Running zinsight@${ZINSIGHT_VERSION} on ${ZINSIGHT_ROOT}"
+        echo "Output: ${ZINSIGHT_OUTPUT}"
+
+        # Capture the existing file's hash so we can report `changed`.
+        before_hash=""
+        if [ -f "${ZINSIGHT_OUTPUT}" ]; then
+          before_hash=$(sha1sum "${ZINSIGHT_OUTPUT}" | awk '{print $1}')
+        fi
+
+        npx --yes "zinsight@${ZINSIGHT_VERSION}" \
+          --root "${ZINSIGHT_ROOT}" \
+          --output "${ZINSIGHT_OUTPUT}"
+
+        if [ ! -f "${ZINSIGHT_OUTPUT}" ]; then
+          if [ "${FAIL_ON_NO_OUTPUT}" = "true" ]; then
+            echo "::error::zinsight produced no output at ${ZINSIGHT_OUTPUT}"
+            exit 1
+          else
+            echo "::warning::zinsight produced no output at ${ZINSIGHT_OUTPUT}"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "output-path=${ZINSIGHT_OUTPUT}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+        fi
+
+        after_hash=$(sha1sum "${ZINSIGHT_OUTPUT}" | awk '{print $1}')
+        if [ "${before_hash}" = "${after_hash}" ]; then
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        fi
+        echo "output-path=${ZINSIGHT_OUTPUT}" >> "$GITHUB_OUTPUT"
+
+    - name: Commit changes
+      if: ${{ inputs.commit == 'true' && steps.run.outputs.changed == 'true' }}
+      shell: bash
+      env:
+        ZINSIGHT_OUTPUT: ${{ inputs.output }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        COMMIT_USER_NAME: ${{ inputs.commit-user-name }}
+        COMMIT_USER_EMAIL: ${{ inputs.commit-user-email }}
+      run: |
+        set -euo pipefail
+        # `git diff --quiet` returns non-zero when there are unstaged changes.
+        if git diff --quiet -- "${ZINSIGHT_OUTPUT}"; then
+          echo "No tracked changes to ${ZINSIGHT_OUTPUT} — nothing to commit."
+          exit 0
+        fi
+        git config user.name  "${COMMIT_USER_NAME}"
+        git config user.email "${COMMIT_USER_EMAIL}"
+        git add "${ZINSIGHT_OUTPUT}"
+        git commit -m "${COMMIT_MESSAGE}"
+        git push
+
+    - name: Comment on PR
+      if: ${{ inputs.pr-comment == 'true' && github.event_name == 'pull_request' && steps.run.outputs.changed == 'true' }}
+      uses: actions/github-script@v7
+      env:
+        ZINSIGHT_OUTPUT: ${{ inputs.output }}
+      with:
+        script: |
+          const fs = require('fs');
+          const path = process.env.ZINSIGHT_OUTPUT;
+          const content = fs.readFileSync(path, 'utf-8');
+          // Pull a few orientation sections — keep the comment short and useful.
+          const grab = (heading) => {
+            const re = new RegExp(`^## ${heading}[\\s\\S]*?(?=^## )`, 'm');
+            const m = content.match(re);
+            return m ? m[0].trim() : '';
+          };
+          const sections = [
+            grab('What This App Does'),
+            grab('At a Glance'),
+            grab('Walking Through One Request'),
+          ].filter(Boolean).slice(0, 2).join('\n\n');
+          const body = [
+            '### 📐 zinsight regenerated this PR\'s `ARCHITECTURE.md`',
+            '',
+            sections || '_No orientation sections detected — see the full file in the diff._',
+            '',
+            `_Generated by [zinsight](https://github.com/zinboard/zinsight). See full doc at \`${path}\`._`,
+          ].join('\n');
+          const { owner, repo } = context.repo;
+          const issue_number = context.payload.pull_request.number;
+          await github.rest.issues.createComment({ owner, repo, issue_number, body });
