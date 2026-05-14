@@ -194,6 +194,14 @@ Python, Go, and Rust support is on the roadmap.
 **Does it send my code anywhere?**
 No. zinsight is a CLI tool that runs entirely on your machine. No network calls, no telemetry, no signup, no API keys. The only thing it touches outside your repo is git (to read commit history for the Hotspots section).
 
+**Why does [Socket](https://socket.dev/npm/package/zinsight) flag "Network access" and "Shell access" on this package?**
+Those flags surface *capability* (the code *can* call shell / network), not malicious behaviour, and they come from transitive dependencies — not zinsight itself. Specifically:
+
+- **Shell access** — triggered by `glob` (a runtime dep for finding source files), which uses `cross-spawn` under the hood to invoke `git` when expanding patterns on some platforms.
+- **Network access** — triggered by a transitive devDep that ships type definitions or build tooling. zinsight's own code makes zero network calls; you can verify by running it offline.
+
+zinsight's own source is auditable — no `child_process`, no `http`/`https`, no `fetch`. If the Socket flags concern you, fork the repo and run with `npm ci --omit=dev` plus `node --frozen-intrinsics dist/cli/index.js <path>` to confirm. We're tracking dep replacements that would eliminate these flags entirely (see [CHANGELOG.md](CHANGELOG.md)).
+
 **Why no AI?**
 Three reasons: (1) determinism — same input always produces the same output; (2) speed — runs in seconds not minutes; (3) it works in environments where LLM tools are blocked or impossible (regulated industries, air-gapped networks, on-call from a plane).
 

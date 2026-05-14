@@ -39,7 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.detectSwagger = detectSwagger;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-const glob_1 = require("glob");
+const fast_glob_1 = __importDefault(require("fast-glob"));
 const traverse_1 = __importDefault(require("@babel/traverse"));
 function detectSwagger(rootDir, files) {
     const result = {
@@ -54,9 +54,9 @@ function detectSwagger(rootDir, files) {
         'api/swagger.*', 'api/openapi.*',
     ];
     for (const pattern of specPatterns) {
-        const matches = glob_1.glob.sync(pattern, {
+        const matches = fast_glob_1.default.sync(pattern, {
             cwd: rootDir,
-            nodir: true,
+            onlyFiles: true,
             ignore: ['**/node_modules/**', '**/dist/**'],
         });
         if (matches.length > 0) {

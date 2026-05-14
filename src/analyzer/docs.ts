@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { glob } from 'glob';
+import fg from 'fast-glob';
 import type { ProjectDoc } from '../types';
 
 const DOC_PATTERNS = [
@@ -31,9 +31,9 @@ export function detectDocs(rootDir: string): ProjectDoc[] {
   const seen = new Set<string>();
 
   for (const pattern of DOC_PATTERNS) {
-    const matches = glob.sync(pattern, {
+    const matches = fg.sync(pattern, {
       cwd: rootDir,
-      nodir: true,
+      onlyFiles: true,
       ignore: ['**/node_modules/**', '**/dist/**'],
     });
 

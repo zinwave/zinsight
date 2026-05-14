@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { glob } from 'glob';
+import fg from 'fast-glob';
 import traverse from '@babel/traverse';
 import type { File as ASTFile } from '@babel/types';
 import type { SwaggerInfo } from '../types';
@@ -23,9 +23,9 @@ export function detectSwagger(
   ];
 
   for (const pattern of specPatterns) {
-    const matches = glob.sync(pattern, {
+    const matches = fg.sync(pattern, {
       cwd: rootDir,
-      nodir: true,
+      onlyFiles: true,
       ignore: ['**/node_modules/**', '**/dist/**'],
     });
     if (matches.length > 0) {

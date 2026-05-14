@@ -32,11 +32,14 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.detectDeployment = detectDeployment;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-const glob_1 = require("glob");
+const fast_glob_1 = __importDefault(require("fast-glob"));
 function detectDeployment(rootDir) {
     const result = {
         dockerfiles: [],
@@ -94,9 +97,9 @@ function findFiles(rootDir, patterns) {
     const results = [];
     for (const pattern of patterns) {
         try {
-            const matches = glob_1.glob.sync(pattern, {
+            const matches = fast_glob_1.default.sync(pattern, {
                 cwd: rootDir,
-                nodir: true,
+                onlyFiles: true,
                 ignore: ['**/node_modules/**', '**/dist/**', '**/build/**'],
             });
             results.push(...matches);

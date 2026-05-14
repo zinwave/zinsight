@@ -1,4 +1,9 @@
-import { glob } from 'glob';
+// `fast-glob` replaces the older `glob` package because `glob@10` pulls in
+// `foreground-child` → `cross-spawn` → `child_process`, which Socket flags
+// as "Shell access" on the published npm package. fast-glob is pure JS
+// (deps: @nodelib/fs.* + micromatch + glob-parent + merge2) and offers the
+// same pattern semantics for our use cases.
+import fg from 'fast-glob';
 import * as path from 'path';
 
 const EXTENSIONS = '*.{js,jsx,ts,tsx,mjs,cjs}';
@@ -22,11 +27,11 @@ const IGNORE_PATTERNS = [
 
 export function discoverFiles(rootDir: string): string[] {
   const pattern = path.join('**', EXTENSIONS);
-  const files = glob.sync(pattern, {
+  const files = fg.sync(pattern, {
     cwd: rootDir,
     ignore: IGNORE_PATTERNS,
     absolute: false,
-    nodir: true,
+    onlyFiles: true, // fast-glob equivalent of glob's `nodir: true`
   });
   return files.sort();
 }

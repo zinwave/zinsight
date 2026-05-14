@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { glob } from 'glob';
+import fg from 'fast-glob';
 import type { DeploymentInfo } from '../types';
 
 export function detectDeployment(rootDir: string): DeploymentInfo {
@@ -63,9 +63,9 @@ function findFiles(rootDir: string, patterns: string[]): string[] {
   const results: string[] = [];
   for (const pattern of patterns) {
     try {
-      const matches = glob.sync(pattern, {
+      const matches = fg.sync(pattern, {
         cwd: rootDir,
-        nodir: true,
+        onlyFiles: true,
         ignore: ['**/node_modules/**', '**/dist/**', '**/build/**'],
       });
       results.push(...matches);
