@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/zinwave/zinsight/security/policy
+    about: For vulnerabilities, please follow the security policy — do NOT open a public issue.
+  - name: Questions / discussion
+    url: https://github.com/zinwave/zinsight/discussions
+    about: Open-ended questions, ideas, and "is this the right tool for X?" go here, not in issues.
