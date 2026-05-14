@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-14
+
+First stable release. The public CLI surface (`npx zinsight [path] [--output …]`) and the generated `ARCHITECTURE.md` shape are now committed to — breaking changes from here on will go in a `2.x` line, never silently.
+
 ### Added
 - Open-source contributor docs: CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.
 - GitHub issue + PR templates under `.github/`.
@@ -30,5 +34,6 @@ JS/TS codebases producing `ARCHITECTURE.md` with Mermaid diagrams, API
 endpoint extraction, database schema detection, external integration
 mapping, and code-health signals.
 
-[Unreleased]: https://github.com/zinwave/zinsight/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/zinwave/zinsight/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/zinwave/zinsight/releases/tag/v1.0.0
 [0.10.0]: https://github.com/zinwave/zinsight/releases/tag/v0.10.0
