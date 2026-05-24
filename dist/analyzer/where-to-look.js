@@ -2,79 +2,130 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildWhereToLook = buildWhereToLook;
 exports.buildEnvMaturity = buildEnvMaturity;
+// SEGMENT match: split the path on / or \ and test each segment intact.
+// Lets us write `/policy/` (literal segment) without false-matching
+// `privacyPolicy.tsx`.
+function pathSegmentTest(fp, re) {
+    // First try the full-path regex (allows callers to use directory anchors
+    // like `[\\/]schemas?[\\/]`). Then fall back to per-segment matching for
+    // word-anchored patterns.
+    if (re.test(fp)) {
+        // Reject if the match is purely a substring inside one segment that
+        // begins with a different word (e.g. `policy` inside `privacyPolicy`).
+        // Detect this by checking each segment in isolation.
+        const segs = fp.split(/[\\/]/);
+        const reSrc = re.source;
+        // If the pattern uses explicit segment anchors (`[\\/]`) we trust the
+        // full-path result. Otherwise insist the match falls on a segment that
+        // starts (or ends) with the matched token.
+        if (reSrc.includes('\\/') || reSrc.includes('[\\\\/]'))
+            return true;
+        for (const seg of segs) {
+            if (!re.test(seg))
+                continue;
+            const m = seg.match(re);
+            if (!m)
+                continue;
+            const matched = m[0];
+            const idx = seg.indexOf(matched);
+            const before = idx === 0 ? '' : seg[idx - 1];
+            const after = idx + matched.length >= seg.length ? '' : seg[idx + matched.length];
+            // accept when adjacent characters are non-alpha (true word boundary)
+            // or when the match sits at the segment edge.
+            const safe = (!before || !/[A-Za-z]/.test(before)) && (!after || !/[A-Za-z]/.test(after));
+            if (safe)
+                return true;
+        }
+        return false;
+    }
+    return false;
+}
 const CONCEPTS = [
     {
         concept: 'Authentication / Login',
         description: 'Identity, sessions, login flows.',
-        pathPatterns: [/auth/i, /\blogin\b/i, /\bsession\b/i, /oauth/i, /jwt/i],
+        pathPatterns: [/\bauth\b/i, /\blogin\b/i, /\bsession\b/i, /\boauth\b/i, /\bjwt\b/i],
     },
     {
         concept: 'Authorization / Roles',
         description: 'Who can do what — guards, role checks, permissions.',
-        pathPatterns: [/guard/i, /roles?/i, /permission/i, /policy/i, /policies/i],
-        contentPatterns: [/@Roles\(|hasPermission|requireRole|RBAC/],
+        pathPatterns: [/\bguard\b/i, /\broles?\b/i, /\bpermissions?\b/i, /[\\/]policies?[\\/]/i, /\brbac\b/i],
+        // Content patterns now look for real call sites / decorators, not bare words
+        contentPatterns: [/@Roles\s*\(/, /hasPermission\s*\(/, /requireRole\s*\(/, /CanActivate\s*\)/, /AuthGuard\s*[(.]/],
+        minContentMatches: 2,
     },
     {
         concept: 'Database schemas',
         description: 'Data models — the shape of stored data.',
         pathPatterns: [/[\\/]schemas?[\\/]/i, /[\\/]models?[\\/]/i, /\.entity\.(t|j)s$/i, /\.schema\.(t|j)s$/i],
+        requiredKind: ['backend-server', 'lambda', 'fullstack', 'library'],
     },
     {
         concept: 'API endpoints',
         description: 'HTTP routes the server exposes.',
         pathPatterns: [/\.controller\.(t|j)s$/i, /[\\/]routes?[\\/]/i, /[\\/]handlers?[\\/]/i],
+        requiredKind: ['backend-server', 'lambda', 'fullstack'],
     },
     {
         concept: 'Configuration / Environment',
         description: 'Where env vars are read and the server bootstraps.',
         pathPatterns: [/main\.(t|j)s$/i, /[\\/]config[\\/]/i, /\.env/i, /bootstrap/i],
-        contentPatterns: [/process\.env\./],
+        contentPatterns: [/process\.env\.[A-Z]/],
+        minContentMatches: 2,
     },
     {
         concept: 'AI / LLM integration',
         description: 'Prompts, model calls, AI-derived signals.',
-        pathPatterns: [/[\\/]ai[\\/]/i, /\bllm\b/i, /\bopenai\b/i, /\banthropic\b/i, /\bclaude\b/i, /\bgemini\b/i, /prompt/i],
+        pathPatterns: [/[\\/]ai[\\/]/i, /\bllm\b/i, /\bopenai\b/i, /\banthropic\b/i, /\bclaude\b/i, /\bgemini\b/i, /\bopenrouter\b/i, /\bmistral\b/i, /\bcohere\b/i, /\bollama\b/i, /\bprompt\b/i],
+        contentPatterns: [/from\s+['"]openai['"]/, /from\s+['"]@anthropic-ai\/sdk['"]/, /from\s+['"]@google\/generative-ai['"]/, /from\s+['"]@google\/genai['"]/, /from\s+['"]cohere-ai['"]/, /from\s+['"]@mistralai\//, /openrouter\.ai\/api/, /https?:\/\/api\.openai\.com/, /https?:\/\/api\.anthropic\.com/],
+        minContentMatches: 1,
     },
     {
         concept: 'Email / Notifications',
         description: 'Outbound emails, push, in-app notifications.',
-        pathPatterns: [/email/i, /mail/i, /notification/i, /notify/i, /push/i],
-        contentPatterns: [/nodemailer|sendgrid|mailgun|postmark|ses\.send/i],
+        pathPatterns: [/\bemail\b/i, /\bmailer?\b/i, /\bnotifications?\b/i, /\bnotify\b/i, /\bsmtp\b/i],
+        contentPatterns: [/from\s+['"]nodemailer['"]/, /from\s+['"]@sendgrid/, /from\s+['"]mailgun/, /from\s+['"]postmark/, /\bses\.sendEmail\s*\(/, /createTransport\s*\(/],
+        minContentMatches: 1,
     },
     {
         concept: 'Webhooks',
         description: 'Inbound POSTs from external services.',
-        pathPatterns: [/webhook/i, /\bhook\b/i, /[\\/]callbacks?[\\/]/i],
+        pathPatterns: [/\bwebhooks?\b/i, /[\\/]callbacks?[\\/]/i],
     },
     {
         concept: 'Caching',
         description: 'In-memory, Redis, or other caches.',
-        pathPatterns: [/cache/i, /redis/i, /memcached/i],
-        contentPatterns: [/\bnew\s+Map\(\)|new\s+LRUCache\b|cache\.(get|set)/],
+        pathPatterns: [/\bcache\b/i, /\bredis\b/i, /\bmemcached\b/i],
+        contentPatterns: [/from\s+['"]ioredis['"]/, /from\s+['"]redis['"]/, /createClient\s*\(\s*\{[^}]*url\s*:/, /new\s+LRUCache\s*\(/, /\bRedisService\b/],
+        minContentMatches: 1,
     },
     {
         concept: 'Logging',
         description: 'Structured logs and log destinations.',
-        pathPatterns: [/logger/i, /logging/i, /\.log\.(t|j)s$/i],
-        contentPatterns: [/winston|pino|bunyan|console\.log\(/],
+        pathPatterns: [/\blogger\b/i, /\blogging\b/i, /\.log\.(t|j)s$/i, /[\\/]audit[\\/]/i],
+        contentPatterns: [/from\s+['"]winston['"]/, /from\s+['"]pino['"]/, /from\s+['"]bunyan['"]/, /new\s+Logger\s*\(/, /@nestjs\/common['"][^;]*Logger/],
+        minContentMatches: 1,
     },
     {
         concept: 'Background jobs / Queues',
         description: 'Async work, cron, queue consumers.',
-        pathPatterns: [/[\\/]jobs?[\\/]/i, /[\\/]queues?[\\/]/i, /cron/i, /worker/i, /scheduler/i],
-        contentPatterns: [/@Cron\(|bull|bullmq|kafka|rabbitmq|sqs|node-cron/i],
+        pathPatterns: [/[\\/]jobs?[\\/]/i, /[\\/]queues?[\\/]/i, /\bcron\b/i, /\bworker\b/i, /\bscheduler\b/i, /\bconsumers?\b/i],
+        contentPatterns: [/@Cron\s*\(/, /from\s+['"]bullmq['"]/, /from\s+['"]bull['"]/, /from\s+['"]kafkajs['"]/, /from\s+['"]amqplib['"]/, /from\s+['"]@aws-sdk\/client-sqs['"]/, /from\s+['"]node-cron['"]/, /SQSClient\s*\(/, /KafkaProducer\s*\(/],
+        minContentMatches: 1,
     },
     {
         concept: 'File uploads',
         description: 'How user-uploaded files are handled.',
-        pathPatterns: [/upload/i, /attachment/i],
-        contentPatterns: [/multer|busboy|formidable|FileInterceptor|UploadedFile/i],
+        pathPatterns: [/\buploads?\b/i, /\battachments?\b/i],
+        contentPatterns: [/from\s+['"]multer['"]/, /from\s+['"]busboy['"]/, /from\s+['"]formidable['"]/, /FileInterceptor\s*\(/, /@UploadedFiles?\s*\(/],
+        minContentMatches: 1,
     },
     {
         concept: 'Payments / Billing',
         description: 'Payment processing or subscription billing.',
-        pathPatterns: [/billing/i, /payment/i, /subscription/i, /invoice/i],
-        contentPatterns: [/stripe|paypal|braintree|razorpay/i],
+        pathPatterns: [/\bbilling\b/i, /\bpayments?\b/i, /\bsubscriptions?\b/i, /\binvoices?\b/i],
+        contentPatterns: [/from\s+['"]stripe['"]/, /from\s+['"]@paypal/, /from\s+['"]braintree['"]/, /from\s+['"]razorpay['"]/, /new\s+Stripe\s*\(/],
+        minContentMatches: 1,
     },
     {
         concept: 'Tests',
@@ -87,31 +138,69 @@ const CONCEPTS = [
         pathPatterns: [/Dockerfile/, /docker-compose/i, /\.github[\\/]workflows/, /\.gitlab-ci/, /[\\/]k8s[\\/]/, /[\\/]terraform[\\/]/, /serverless\.ya?ml/, /vercel\.json/, /netlify\.toml/, /render\.ya?ml/, /fly\.toml/],
     },
 ];
+// Paths that match heuristically but rarely represent the canonical location
+// for the concept. We rank them last when picking representative files.
+const DEMOTED_PATH = /([\\/](scripts?|migrations?|seeds?|fixtures?|tests?|__tests__|examples?|samples?|dev-docker-related|tools?)[\\/])/i;
 function buildWhereToLook(input) {
     const out = [];
+    const projectKind = input.projectKind;
     for (const def of CONCEPTS) {
+        // Skip concepts that don't apply to this project kind
+        if (def.requiredKind && projectKind && !def.requiredKind.includes(projectKind)) {
+            out.push({
+                concept: def.concept,
+                description: def.description,
+                files: [],
+                detected: false,
+            });
+            continue;
+        }
         const matches = new Set();
-        // Path matches
+        // Path matches — use segment-aware test
         for (const fp of input.allFilePaths) {
-            if (def.pathPatterns.some((re) => re.test(fp)))
+            if (def.pathPatterns.some((re) => pathSegmentTest(fp, re)))
                 matches.add(fp);
         }
-        // Content matches (only if patterns are defined — skip otherwise to keep
-        // results lean and avoid grep-like full-corpus scans for every concept)
+        // Content matches — only as a fallback, requiring stronger evidence.
+        // We count files that hit at least one pattern AND track how many
+        // *distinct* patterns matched across those files (to suppress
+        // single-word coincidences). To avoid self-matching on a regex source
+        // that contains the literal "Roles" etc., we ignore matches inside
+        // backtick-delimited regex-source-looking lines.
         if (def.contentPatterns && matches.size === 0) {
+            const distinctPatterns = new Set();
+            const candidate = new Set();
             for (const [fp, content] of input.contentMap) {
-                if (def.contentPatterns.some((re) => re.test(content))) {
-                    matches.add(fp);
-                    if (matches.size >= 8)
+                // skip files unlikely to be the "where this lives" answer
+                if (/\.(spec|test|e2e-spec)\.(t|j)sx?$/.test(fp))
+                    continue;
+                const ctx = stripStringAndRegexLiterals(content);
+                for (let i = 0; i < def.contentPatterns.length; i++) {
+                    if (def.contentPatterns[i].test(ctx)) {
+                        distinctPatterns.add(i);
+                        candidate.add(fp);
                         break;
+                    }
                 }
+            }
+            const need = def.minContentMatches ?? 1;
+            if (candidate.size >= need || distinctPatterns.size >= 2) {
+                for (const fp of candidate)
+                    matches.add(fp);
             }
         }
         // Filter out obviously-noisy paths
         const filtered = [...matches]
             .filter((f) => !/[\\/]node_modules[\\/]/.test(f))
             .filter((f) => !/\.d\.ts$/.test(f))
-            .sort();
+            .sort((a, b) => {
+            // Demote scripts/migrations/seeds to the bottom of the list
+            const aDemoted = DEMOTED_PATH.test(a) ? 1 : 0;
+            const bDemoted = DEMOTED_PATH.test(b) ? 1 : 0;
+            if (aDemoted !== bDemoted)
+                return aDemoted - bDemoted;
+            return a.localeCompare(b);
+        });
         out.push({
             concept: def.concept,
             description: def.description,
@@ -120,6 +209,22 @@ function buildWhereToLook(input) {
         });
     }
     return out;
+}
+// Remove string literals and regex bodies from content so that detection
+// patterns can't false-match on text that exists purely inside a string or
+// regex literal (zinsight's own detection-pattern source text being the
+// canonical example).
+function stripStringAndRegexLiterals(src) {
+    // Conservatively replace contents of single/double/template quotes and
+    // /.../ regex literals with whitespace. This is a heuristic — we don't
+    // need to be a parser; just remove enough noise to avoid self-matching.
+    return src
+        .replace(/\/\/[^\n]*/g, '') // line comments
+        .replace(/\/\*[\s\S]*?\*\//g, '') // block comments
+        .replace(/`(?:\\.|\$\{[^}]*\}|[^`\\])*`/g, '``')
+        .replace(/'(?:\\.|[^'\\\n])*'/g, "''")
+        .replace(/"(?:\\.|[^"\\\n])*"/g, '""')
+        .replace(/\/(?![*/])(?:\\.|\[[^\]\n]*\]|[^/\\\n])+\/[gimsuy]*/g, '//');
 }
 /* ============================ Env Var Maturity ============================ */
 // Order matters — first match wins. Put more-specific provider patterns before
@@ -182,10 +287,24 @@ function buildEnvMaturity(input) {
             if (defaultValue !== null)
                 break;
         }
+        // Redact sensitive defaults — never publish secrets in the doc.
+        // Sensitive when EITHER:
+        //   (a) the variable name names a secret/credential, OR
+        //   (b) the value embeds URL credentials (`scheme://user:pass@host`), OR
+        //   (c) the value looks like a known credential token, OR
+        //   (d) the value is a long opaque base64/hex-ish string.
+        const sensitiveName = /SECRET|PASSWORD|PASSWD|API[_-]?KEY|TOKEN|PRIVATE[_-]?KEY|CREDENTIALS?|DSN|CONNECTION[_-]?STRING/i.test(name);
+        const urlWithCreds = defaultValue !== null && /:\/\/[^/\s:@]+:[^@/\s]+@/.test(defaultValue);
+        const tokenShape = defaultValue !== null && /^(sk-|ghp_|gho_|ghs_|xox[bp]-|AKIA[0-9A-Z]{16})/.test(defaultValue);
+        const opaqueLong = defaultValue !== null && defaultValue.length >= 32 && /^[A-Za-z0-9+/=_-]{32,}$/.test(defaultValue) && !/^https?:/.test(defaultValue);
+        let displayDefault = defaultValue;
+        if (defaultValue !== null && (sensitiveName || urlWithCreds || tokenShape || opaqueLong)) {
+            displayDefault = '<redacted>';
+        }
         out.push({
             name,
             required: defaultValue === null,
-            defaultValue,
+            defaultValue: displayDefault,
             files: c.files,
             riskHint: inferRisk(name),
         });

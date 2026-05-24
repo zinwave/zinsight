@@ -55,7 +55,80 @@ const JUNK_HOSTS = new Set([
     'datatracker.ietf.org',
     'opensource.org',
     'spdx.org',
+    // Docs / scaffolding / tooling — show up in generated readme links and templates
+    'vitejs.dev',
+    'vite.dev',
+    'cra.link',
+    'create-react-app.dev',
+    'reactjs.org',
+    'react.dev',
+    'nextjs.org',
+    'tailwindcss.com',
+    'eslint.org',
+    'prettier.io',
+    'typescriptlang.org',
+    'nodejs.org',
+    'developer.mozilla.org',
+    'mdn.io',
+    'npmjs.com',
+    'npmjs.org',
+    'yarnpkg.com',
+    'pnpm.io',
+    'github.io',
+    'gitlab.com',
+    'gitlab.io',
+    'bitbucket.org',
+    // Docs subdomains routinely embedded in code comments / scaffolding
+    'docs.mongodb.com',
+    'www.mongodb.com',
+    'docs.aws.amazon.com',
+    'docs.nestjs.com',
+    'docs.docker.com',
 ]);
+// Domain suffixes that are content hosts — never API integrations.
+// (Used for *.suffix matching — not exact-host matching.)
+const JUNK_SUFFIXES = [
+    // Image / asset CDNs
+    /(^|\.)pinimg\.com$/i,
+    /(^|\.)unsplash\.com$/i,
+    /(^|\.)freepik\.com$/i,
+    /(^|\.)vecteezy\.com$/i,
+    /(^|\.)meesho\.com$/i,
+    /(^|\.)pngtree\.com$/i,
+    /(^|\.)iconscout\.com$/i,
+    /(^|\.)togetherv\.com$/i,
+    /(^|\.)cherishx\.com$/i,
+    /(^|\.)creativehatti\.com$/i,
+    /(^|\.)media-amazon\.com$/i,
+    /(^|\.)imgur\.com$/i,
+    /(^|\.)cloudinary\.com$/i,
+    /(^|\.)gravatar\.com$/i,
+    /\.s3[.-][a-z0-9-]+\.amazonaws\.com$/i, // generic S3 buckets in <img src>
+    // Social / share / contact
+    /(^|\.)youtube\.com$/i,
+    /(^|\.)youtu\.be$/i,
+    /(^|\.)instagram\.com$/i,
+    /(^|\.)facebook\.com$/i,
+    /(^|\.)twitter\.com$/i,
+    /(^|\.)x\.com$/i,
+    /(^|\.)linkedin\.com$/i,
+    /(^|\.)tiktok\.com$/i,
+    /(^|\.)wa\.me$/i,
+    /(^|\.)reddit\.com$/i,
+    /(^|\.)medium\.com$/i,
+    // Marketing / brand homepages of dev tools
+    /(^|\.)docker\.com$/i,
+    /(^|\.)atlassian-dev\.net$/i, // cdn / asset host, not an API surface we call
+];
+function isJunkHost(host) {
+    if (JUNK_HOSTS.has(host))
+        return true;
+    for (const re of JUNK_SUFFIXES) {
+        if (re.test(host))
+            return true;
+    }
+    return false;
+}
 function detectExternalServices(files, contentMap) {
     const serviceMap = new Map();
     for (const [filePath, ast] of files) {
@@ -68,15 +141,14 @@ function detectExternalServices(files, contentMap) {
     for (const [url, data] of serviceMap) {
         // Skip well-known URL-only hosts that aren't real integrations
         const host = url.replace(/^https?:\/\//, '').split('/')[0];
-        if (JUNK_HOSTS.has(host))
+        if (isJunkHost(host))
             continue;
-        // Also skip "services" with no detected HTTP methods AND a label that
-        // looks like a generic vanity domain (heuristic: top-level domain only,
-        // no API path, no methods).
-        if (data.methods.size === 0 && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(url) && url === host) {
-            // No methods + bare domain → likely a string in markup, not a call.
-            // Only keep if explicitly recognised as an OAuth or API endpoint.
-            if (data.type === 'unknown')
+        // Drop low-confidence entries: no HTTP method captured AND no path on the URL.
+        // These almost always come from a string literal embedded in source (image
+        // src, doc link, share URL) rather than an actual outbound HTTP call.
+        if (data.methods.size === 0 && !data.confirmedCall) {
+            // Keep only when we explicitly recognised it as a known service.
+            if (data.type === 'unknown' || data.label === host)
                 continue;
         }
         results.push({
@@ -105,8 +177,8 @@ function classifyUrl(url) {
         return { domain: url, label: url, type: 'unknown' };
     }
 }
-function addService(serviceMap, url, filePath, method) {
-    const { domain, label, type } = classifyUrl(url);
+function addService(serviceMap, url, filePath, method, confirmedCall = false) {
+    const { label, type } = classifyUrl(url);
     const key = label; // Group by label, not URL
     if (!serviceMap.has(key)) {
         serviceMap.set(key, {
@@ -114,41 +186,21 @@ function addService(serviceMap, url, filePath, method) {
             type,
             methods: new Set(),
             files: new Set(),
+            confirmedCall: false,
         });
     }
     const entry = serviceMap.get(key);
     entry.files.add(filePath);
     if (method)
         entry.methods.add(method.toUpperCase());
+    if (confirmedCall)
+        entry.confirmedCall = true;
 }
-function scanFileForServices(filePath, ast, content, serviceMap) {
-    // Extract URLs from string literals via regex on content (catches template literals too)
-    const urlRegex = /https?:\/\/[a-zA-Z0-9\-._~:/?#\[\]@!$&()*+,;=%]+/g;
-    const urlMatches = content.match(urlRegex) || [];
-    for (let url of urlMatches) {
-        // Strip trailing punctuation that's likely not part of the URL
-        url = url.replace(/[';,)\]]+$/, '');
-        // Skip template literal artifacts (e.g., https://${VAR} → https://$)
-        if (url.includes('$') || url.includes('{') || url.includes('}'))
-            continue;
-        // Skip URLs that are too short to be real (e.g., https://x)
-        if (url.length < 12)
-            continue;
-        // Skip localhost, example.com, internal relative URLs
-        if (url.includes('localhost') || url.includes('127.0.0.1') || url.includes('example.com'))
-            continue;
-        // Skip common non-API URLs
-        if (url.includes('github.com/') && !url.includes('api.github.com'))
-            continue;
-        if (url.includes('npmjs.org') || url.includes('npmjs.com'))
-            continue;
-        if (url.includes('w3.org') || url.includes('json-schema.org'))
-            continue;
-        // Skip placeholder/example domains
-        if (url.includes('yourdomain') || url.includes('mysite') || url.includes('your-') || url.includes('example'))
-            continue;
-        addService(serviceMap, url, filePath, '');
-    }
+function scanFileForServices(filePath, ast, _content, serviceMap) {
+    // Only capture URLs that appear in real HTTP-client call sites. Earlier
+    // versions also scraped every `https?://` literal in the file, which
+    // produced massive false-positive lists (image CDNs, share links, doc
+    // URLs, scaffolding readmes). AST-only is the source of truth.
     (0, traverse_1.default)(ast, {
         CallExpression({ node }) {
             // fetch('https://...')
@@ -158,20 +210,20 @@ function scanFileForServices(filePath, ast, content, serviceMap) {
                 const url = extractStringValue(node.arguments[0]);
                 if (url && url.startsWith('http')) {
                     const method = extractFetchMethod(node.arguments[1]) || 'GET';
-                    addService(serviceMap, url, filePath, method);
+                    addService(serviceMap, url, filePath, method, true);
                 }
             }
-            // axios.get/post/etc('url')
+            // axios.get/post/etc('url'), client.get('url'), httpService.get('url')
             if (node.callee.type === 'MemberExpression' &&
                 node.callee.property.type === 'Identifier' &&
                 HTTP_METHODS.has(node.callee.property.name) &&
                 node.arguments.length >= 1) {
                 const url = extractStringValue(node.arguments[0]);
                 if (url && url.startsWith('http')) {
-                    addService(serviceMap, url, filePath, node.callee.property.name);
+                    addService(serviceMap, url, filePath, node.callee.property.name, true);
                 }
             }
-            // axios({ url: '...', method: '...' })
+            // axios({ url: '...', method: '...' }) | request({ url: '...' })
             if (node.callee.type === 'Identifier' &&
                 (node.callee.name === 'axios' || node.callee.name === 'request') &&
                 node.arguments.length >= 1 &&
@@ -188,7 +240,24 @@ function scanFileForServices(filePath, ast, content, serviceMap) {
                         method = extractStringValue(prop.value) || 'GET';
                 }
                 if (url.startsWith('http')) {
-                    addService(serviceMap, url, filePath, method);
+                    addService(serviceMap, url, filePath, method, true);
+                }
+            }
+            // axios.create({ baseURL: 'https://...' }) — establishes an integration target
+            if (node.callee.type === 'MemberExpression' &&
+                node.callee.property.type === 'Identifier' &&
+                node.callee.property.name === 'create' &&
+                node.arguments.length >= 1 &&
+                node.arguments[0].type === 'ObjectExpression') {
+                for (const prop of node.arguments[0].properties) {
+                    if (prop.type !== 'ObjectProperty' || prop.key.type !== 'Identifier')
+                        continue;
+                    if (prop.key.name !== 'baseURL')
+                        continue;
+                    const url = extractStringValue(prop.value);
+                    if (url && url.startsWith('http')) {
+                        addService(serviceMap, url, filePath, '', true);
+                    }
                 }
             }
         },

@@ -33,8 +33,37 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.PERIPHERAL_DIRS = void 0;
+exports.isPeripheralModule = isPeripheralModule;
 exports.detectSubsystems = detectSubsystems;
 const path = __importStar(require("path"));
+// Directory names that are operational/supporting, not domain features.
+// Used by the renderer to demote them to a "Operational code" footnote
+// instead of rendering them alongside real feature modules in the
+// architecture diagram and modules table.
+exports.PERIPHERAL_DIRS = new Set([
+    'scripts',
+    'script',
+    'migrations',
+    'migration',
+    'seeds',
+    'seed',
+    'fixtures',
+    'fixture',
+    'tools',
+    'tooling',
+    'bin',
+    'examples',
+    'example',
+    'samples',
+    'demo',
+    'demos',
+    'dev-docker-related',
+    'docker',
+]);
+function isPeripheralModule(name) {
+    return exports.PERIPHERAL_DIRS.has(name.toLowerCase());
+}
 function detectSubsystems(files) {
     // Group files by their top-level directory
     const groups = new Map();

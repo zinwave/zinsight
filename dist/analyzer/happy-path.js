@@ -13,9 +13,25 @@ const traverse_1 = __importDefault(require("@babel/traverse"));
  */
 function buildHappyPath(input) {
     const { routes, files, asts } = input;
-    if (routes.length === 0)
+    // Skip Walking Through One Request for trivial repos. A 1-route hello-world
+    // produces a canned 4-step narrative that adds no value. Require either
+    // ≥3 endpoints OR a substantive handler (has a service file + ≥10 LOC).
+    const routableRoutes = routes.filter((r) => r.method !== 'USE');
+    if (routableRoutes.length === 0)
         return null;
-    const candidate = pickRepresentativeRoute(routes, files);
+    if (routableRoutes.length < 3) {
+        // Allow only when the candidate handler is non-trivial — service file
+        // exists OR controller file has meaningful body length.
+        const c = pickRepresentativeRoute(routableRoutes, files);
+        if (!c)
+            return null;
+        const node = files.get(c.file);
+        const ctrlLoc = node?.loc ?? 0;
+        const hasService = !!c.file && [...files.keys()].some((f) => f === c.file.replace(/\.controller\./, '.service.'));
+        if (!hasService && ctrlLoc < 20)
+            return null;
+    }
+    const candidate = pickRepresentativeRoute(routableRoutes, files);
     if (!candidate)
         return null;
     const steps = [];

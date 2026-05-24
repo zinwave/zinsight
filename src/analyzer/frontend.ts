@@ -183,6 +183,27 @@ function detectRouter(deps: Set<string>, files: string[]): string | null {
 function extractReactRouterRoutes(asts: Map<string, ASTFile | null>): FrontendRoute[] {
   const out: FrontendRoute[] = [];
 
+  // Helper — extract `path=...` from a JSX opening element, if present.
+  const extractPath = (open: any): string | null => {
+    if (!open?.attributes) return null;
+    for (const attr of open.attributes) {
+      if (attr.type !== 'JSXAttribute') continue;
+      if (attr.name?.name !== 'path') continue;
+      const v = attr.value;
+      if (v?.type === 'StringLiteral') return v.value;
+    }
+    return null;
+  };
+
+  const joinPath = (parent: string, child: string): string => {
+    if (!parent) return child;
+    if (!child) return parent;
+    if (child.startsWith('/')) return child; // child is absolute
+    const p = parent.endsWith('/') ? parent.slice(0, -1) : parent;
+    const c = child.startsWith('/') ? child : '/' + child;
+    return p + c;
+  };
+
   for (const [fp, ast] of asts) {
     if (!ast) continue;
     // CRA / older React projects keep JSX in plain .js files. Don't restrict
@@ -219,9 +240,30 @@ function extractReactRouterRoutes(asts: Map<string, ASTFile | null>): FrontendRo
             }
           }
         }
-        if (routePath) {
-          out.push({ path: routePath, componentRef, file: fp });
+        if (routePath === null) return;
+
+        // Walk up to find enclosing <Route path="..."> ancestors so that
+        // <Route path="dashboards" /> nested under <Route path="/app"> is
+        // recorded as `/app/dashboards`, not `dashboards`.
+        //
+        // Start ascent from the JSXElement that contains *this* opening
+        // element's parent — skipping our own enclosing JSXElement (whose
+        // path we already used as `routePath`).
+        let fullPath = routePath;
+        let cursor: any = p.parentPath?.parentPath; // skip our own JSXElement
+        while (cursor) {
+          const node: any = cursor.node;
+          if (node && node.type === 'JSXElement' && node.openingElement?.name?.type === 'JSXIdentifier' && node.openingElement.name.name === 'Route') {
+            const parentPath = extractPath(node.openingElement);
+            if (parentPath !== null) {
+              fullPath = joinPath(parentPath, fullPath);
+              if (parentPath.startsWith('/')) break;
+            }
+          }
+          cursor = cursor.parentPath;
         }
+
+        out.push({ path: fullPath, componentRef, file: fp });
       },
     });
   }

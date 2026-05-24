@@ -21,6 +21,7 @@ program
   .argument('[directory]', 'Project root directory (default: current directory)')
   .option('-o, --output <path>', 'Output file path', 'ARCHITECTURE.md')
   .option('-r, --root <path>', 'Project root directory (alias for [directory])')
+  .option('-n, --name <name>', 'Override project name in the generated document')
   .action((directory, options) => {
     const rootDir = path.resolve(directory || options.root || process.cwd());
     const outputPath = path.resolve(options.output);
@@ -41,10 +42,24 @@ program
     try {
       const result = analyze(rootDir, (msg) => {
         spinner.text = msg;
-      });
+      }, { name: options.name });
 
       spinner.succeed('Analysis complete');
       console.log('');
+
+      // Honesty check: zinsight is a JS/TS analyser. For PHP/Python/Go/Terraform
+      // projects it produces near-empty output. Warn loudly instead of
+      // pretending the doc is complete.
+      if (result.project.language && result.project.language !== 'js-ts' && result.project.language !== 'unknown') {
+        console.log(chalk.yellow('  ⚠') + ` Detected language: ${result.project.language.toUpperCase()}`);
+        console.log(chalk.yellow('    zinsight currently parses JavaScript/TypeScript only.'));
+        console.log(chalk.yellow('    The generated doc will list deployment / CI / docs only.'));
+        console.log('');
+      }
+      if (result.project.resolvedRoot !== result.project.invokedFrom) {
+        const rel = path.relative(result.project.invokedFrom, result.project.resolvedRoot) || result.project.resolvedRoot;
+        console.log(chalk.cyan('  ℹ') + ` Descended into project root: ./${rel}`);
+      }
 
       // Generate markdown
       const markdown = generateMarkdown(result);

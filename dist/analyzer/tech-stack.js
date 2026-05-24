@@ -155,28 +155,33 @@ const BUILD_MAP = {
     husky: 'Husky',
     'lint-staged': 'lint-staged',
 };
-function detectTechStack(rootDir, knownFiles, actualDbTypes) {
+function detectTechStack(rootDir, knownFiles, actualDbTypes, detectedLanguage) {
     const pkgPath = path.join(rootDir, 'package.json');
     let allDeps = {};
     let scripts = {};
     let packageManager;
-    try {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-        allDeps = {
-            ...(pkg.dependencies || {}),
-            ...(pkg.devDependencies || {}),
-            ...(pkg.peerDependencies || {}),
-        };
-        scripts = pkg.scripts || {};
-        // Detect package manager
-        if (pkg.packageManager) {
-            const pm = pkg.packageManager.split('@')[0];
-            if (pm)
-                packageManager = pm;
+    // For non-JS/TS projects, skip the package.json read so we don't claim
+    // the project is Node.js when it's actually Symfony / Django / etc.
+    const isJsTs = !detectedLanguage || detectedLanguage === 'js-ts' || detectedLanguage === 'unknown';
+    if (isJsTs) {
+        try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+            allDeps = {
+                ...(pkg.dependencies || {}),
+                ...(pkg.devDependencies || {}),
+                ...(pkg.peerDependencies || {}),
+            };
+            scripts = pkg.scripts || {};
+            // Detect package manager
+            if (pkg.packageManager) {
+                const pm = pkg.packageManager.split('@')[0];
+                if (pm)
+                    packageManager = pm;
+            }
         }
-    }
-    catch {
-        // No package.json
+        catch {
+            // No package.json
+        }
     }
     // Auto-detect package manager from lock files if not specified
     if (!packageManager) {
@@ -200,12 +205,39 @@ function detectTechStack(rootDir, knownFiles, actualDbTypes) {
         languages.add('TypeScript');
     if (extCounts['.js'] || extCounts['.jsx'] || extCounts['.mjs'] || extCounts['.cjs'])
         languages.add('JavaScript');
-    // Detect runtime
+    // Detect runtime. Honour the project language detected upstream so that PHP
+    // / Python / Go / Terraform projects don't get labelled "Node.js" just
+    // because a stub package.json exists (cimpress mcpcommunicator pattern).
     let runtime = 'Node.js';
     if (allDeps['bun'] || allDeps['bun-types'])
         runtime = 'Bun';
     if (allDeps['deno'])
         runtime = 'Deno';
+    if (detectedLanguage === 'php')
+        runtime = 'PHP';
+    if (detectedLanguage === 'python')
+        runtime = 'Python';
+    if (detectedLanguage === 'go')
+        runtime = 'Go';
+    if (detectedLanguage === 'rust')
+        runtime = 'Rust';
+    if (detectedLanguage === 'java')
+        runtime = 'JVM';
+    if (detectedLanguage === 'ruby')
+        runtime = 'Ruby';
+    if (detectedLanguage === 'terraform')
+        runtime = 'Terraform';
+    // For non-JS/TS projects we also blank out the language list so the
+    // "Languages" cell doesn't claim TypeScript on a PHP repo just because a
+    // single `.ts` happens to exist.
+    if (detectedLanguage && detectedLanguage !== 'js-ts' && detectedLanguage !== 'unknown') {
+        languages.clear();
+        const langLabel = {
+            php: 'PHP', python: 'Python', go: 'Go', java: 'Java', ruby: 'Ruby', rust: 'Rust', terraform: 'HCL (Terraform)',
+        };
+        if (langLabel[detectedLanguage])
+            languages.add(langLabel[detectedLanguage]);
+    }
     const frameworks = matchDeps(allDeps, FRAMEWORK_MAP);
     let databases = matchDeps(allDeps, DATABASE_MAP);
     // Filter databases to only those actually used in code (if we have that info)

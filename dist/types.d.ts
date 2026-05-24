@@ -1,8 +1,42 @@
 import type { File as ASTFile } from '@babel/types';
+export type ProjectKind = 'cli' | 'library' | 'static-site' | 'frontend' | 'backend-server' | 'lambda' | 'fullstack' | 'unknown';
+export type Language = 'js-ts' | 'php' | 'python' | 'go' | 'java' | 'ruby' | 'rust' | 'terraform' | 'unknown';
 export interface ProjectInfo {
     name: string;
     version: string;
     description: string;
+    /** Detected project type — drives section gating in the renderer. */
+    kind: ProjectKind;
+    /** Primary implementation language. `js-ts` is the only one fully supported today. */
+    language: Language;
+    /** True when zinsight is reasonably sure about `language`. */
+    languageSupported: boolean;
+    /** Resolved root directory (may differ from CLI argument when we descend into code/). */
+    resolvedRoot: string;
+    /** Path of the original directory the CLI was pointed at — for transparency. */
+    invokedFrom: string;
+}
+/**
+ * Detected capabilities of the repo. Built once at the analyzer level so that
+ * positive surfaces ("Core Capabilities") and negative ones ("What This Repo
+ * Isn't") cannot contradict each other.
+ */
+export interface CapabilitySet {
+    hasHttpApi: boolean;
+    hasDatabase: boolean;
+    hasFrontend: boolean;
+    hasAuth: boolean;
+    hasAuthorization: boolean;
+    hasPayments: boolean;
+    hasAi: boolean;
+    hasWebhooks: boolean;
+    hasFileUploads: boolean;
+    hasBackgroundJobs: boolean;
+    hasScheduledJobs: boolean;
+    hasEmailNotifications: boolean;
+    hasCaching: boolean;
+    hasMultiRegion: boolean;
+    hasLambdaTriggers: boolean;
 }
 export interface EntryPoint {
     label: string;
@@ -279,6 +313,7 @@ export interface AnalysisResult {
     frontend: FrontendInfo;
     whereToLook: ConceptLocation[];
     envMaturity: EnvVarMaturity[];
+    capabilities: CapabilitySet;
     stats: {
         totalFiles: number;
         totalLoc: number;

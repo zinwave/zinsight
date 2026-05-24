@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { File as ASTFile } from '@babel/types';
 import traverse from '@babel/traverse';
+import { isPeripheralModule } from './subsystems';
 import type {
   FolderPurpose,
   StateSurface,
@@ -88,6 +89,9 @@ export function inferFolderPurposes(input: {
 
   for (const sub of input.subsystems) {
     if (skipNames.has(sub.name.toLowerCase())) continue;
+    // Skip peripheral dirs (scripts/migrations/seeds/tools/fixtures) —
+    // they're not feature modules.
+    if (isPeripheralModule(sub.name)) continue;
 
     const routes = input.routes.filter((r) => r.file.includes(`/${sub.name}/`) || r.file.includes(`\\${sub.name}\\`));
     const models = input.databases
@@ -95,6 +99,13 @@ export function inferFolderPurposes(input: {
       .filter((m) => m.file.includes(`/${sub.name}/`) || m.file.includes(`/schemas/`));
 
     let liner = '';
+    // Look up the folder README first — if the module has its own README with
+    // a real summary, use that as the one-liner. This catches custom-named
+    // modules (e.g. `analyzer`, `parser`, `generator`) that the fixed
+    // allow-list below can't describe.
+    const readme = findFolderReadme(input.rootDir, sub.files) || undefined;
+    const readmeSummary = readme?.summary?.trim() || '';
+
     if (sub.name === 'auth' || /^auth/i.test(sub.name)) {
       liner = 'Identity, sessions, role guards. Every request passes through here.';
     } else if (/integrations?$/.test(sub.name) || sub.name.includes('integration')) {
@@ -119,15 +130,81 @@ export function inferFolderPurposes(input: {
         ? 'Read APIs'
         : 'CRUD APIs';
       liner = `${action} for ${top || sub.name} (${routes.length} endpoint${routes.length === 1 ? '' : 's'}).`;
+    } else if (readmeSummary) {
+      // Prefer the README summary over the generic fallback.
+      liner = readmeSummary.length > 160 ? readmeSummary.slice(0, 157) + '...' : readmeSummary;
     } else {
-      liner = `Feature module — ${sub.files.length} file${sub.files.length === 1 ? '' : 's'}, ${sub.publicApi.length} public export${sub.publicApi.length === 1 ? '' : 's'}.`;
+      // Name-based heuristic before falling back to the truly generic line.
+      const named = nameBasedPurpose(sub.name);
+      if (named) {
+        liner = named;
+      } else {
+        liner = `Feature module — ${sub.files.length} file${sub.files.length === 1 ? '' : 's'}, ${sub.publicApi.length} public export${sub.publicApi.length === 1 ? '' : 's'}.`;
+      }
     }
 
-    const readme = findFolderReadme(input.rootDir, sub.files) || undefined;
     out.push({ name: sub.name, oneLiner: liner, readme });
   }
 
   return out;
+}
+
+// Name-based purpose inference. Catches well-known module names that aren't
+// in the explicit allow-list above. Keep the list small — incorrect labels
+// here would propagate through "Modules" and the architecture diagram.
+function nameBasedPurpose(name: string): string | null {
+  const n = name.toLowerCase();
+  const exact: Record<string, string> = {
+    analyzer: 'Code analysis pipeline.',
+    analyzers: 'Code analysis pipeline.',
+    parser: 'Parsing utilities.',
+    parsers: 'Parsing utilities.',
+    generator: 'Output generation (rendering, templating).',
+    generators: 'Output generation (rendering, templating).',
+    cli: 'Command-line interface entry points.',
+    worker: 'Background worker processes.',
+    workers: 'Background worker processes.',
+    queue: 'Job/message queue consumers.',
+    queues: 'Job/message queue consumers.',
+    webhook: 'Inbound webhook handlers.',
+    webhooks: 'Inbound webhook handlers.',
+    notification: 'Notification delivery (email/push/in-app).',
+    notifications: 'Notification delivery (email/push/in-app).',
+    notify: 'Notification delivery (email/push/in-app).',
+    crawler: 'Crawler / scraper code.',
+    crawlers: 'Crawler / scraper code.',
+    scheduler: 'Scheduled task orchestration.',
+    schedulers: 'Scheduled task orchestration.',
+    cron: 'Scheduled task orchestration.',
+    middleware: 'Cross-cutting request middleware.',
+    middlewares: 'Cross-cutting request middleware.',
+    config: 'Configuration loading and constants.',
+    constants: 'Domain-wide constants.',
+    types: 'Shared TypeScript type definitions.',
+    models: 'Domain models / data shapes.',
+    repository: 'Data-access repositories.',
+    repositories: 'Data-access repositories.',
+    handlers: 'Lambda / route handlers.',
+    handler: 'Lambda / route handlers.',
+    stores: 'Client-side state stores.',
+    store: 'Client-side state stores.',
+    hooks: 'Custom React hooks.',
+    components: 'UI components.',
+    pages: 'Top-level page/route views.',
+    views: 'Top-level page/route views.',
+    layouts: 'Layout components shared across pages.',
+    services: 'Business logic / service layer.',
+    service: 'Business logic / service layer.',
+    controllers: 'HTTP controllers.',
+    controller: 'HTTP controllers.',
+    routes: 'HTTP route definitions.',
+    routing: 'HTTP route definitions.',
+    mail: 'Email composition and delivery.',
+    audit: 'Audit logs and security telemetry.',
+    cache: 'Caching layer (Redis / in-memory).',
+    caches: 'Caching layer (Redis / in-memory).',
+  };
+  return exact[n] || null;
 }
 
 function countVerbs(routes: RouteEndpoint[]) {
@@ -162,8 +239,10 @@ export function buildStateMap(input: {
   asts: Map<string, ASTFile | null>;
   contentMap: Map<string, string>;
   rootDir: string;
+  packageDeps?: Set<string>;
 }): StateSurface[] {
   const surfaces: StateSurface[] = [];
+  const deps = input.packageDeps ?? new Set<string>();
 
   // 1. Persistent stores (DB) — prefer src/* schema and service files over
   // top-level scripts (seeds, debug helpers) for the "sample files" hint.
@@ -236,34 +315,43 @@ export function buildStateMap(input: {
     });
   }
 
-  // 4. Redis
-  const redisFiles: string[] = [];
-  for (const [fp, content] of input.contentMap) {
-    if (/\bredis\b/i.test(content) && (/createClient|RedisClient|ioredis/.test(content))) {
-      redisFiles.push(fp);
+  // 4. Redis — gate on declared dependency to avoid false-positives from
+  // tools (like zinsight itself) that mention "redis" in detection strings.
+  const redisDeclared = deps.has('redis') || deps.has('ioredis') || deps.has('@nestjs/cache-manager');
+  if (redisDeclared) {
+    const redisFiles: string[] = [];
+    for (const [fp, content] of input.contentMap) {
+      if (/from\s+['"](ioredis|redis|@nestjs\/cache-manager)['"]/.test(content) || /\bnew\s+Redis\s*\(/.test(content)) {
+        redisFiles.push(fp);
+      }
     }
-  }
-  if (redisFiles.length > 0) {
-    surfaces.push({
-      kind: 'redis',
-      description: 'Redis — likely caching or session/queue store.',
-      files: redisFiles.slice(0, 5),
-    });
+    if (redisFiles.length > 0) {
+      surfaces.push({
+        kind: 'redis',
+        description: 'Redis — likely caching or session/queue store.',
+        files: redisFiles.slice(0, 5),
+      });
+    }
   }
 
-  // 5. Cookie / session
-  const cookieFiles: string[] = [];
-  for (const [fp, content] of input.contentMap) {
-    if (/cookie-?parser|express-session|cookies\.(get|set)|res\.cookie/.test(content)) {
-      cookieFiles.push(fp);
+  // 5. Cookie / session — also gate on declared dependency. Otherwise a
+  // file that contains the literal regex `cookies.(get|set)` as part of a
+  // pattern (as zinsight's own where-to-look.ts does) self-triggers.
+  const sessionDeclared = deps.has('cookie-parser') || deps.has('express-session') || deps.has('cookies') || deps.has('iron-session');
+  if (sessionDeclared) {
+    const cookieFiles: string[] = [];
+    for (const [fp, content] of input.contentMap) {
+      if (/from\s+['"](cookie-parser|express-session|cookies|iron-session)['"]/.test(content) || /\bres\.cookie\s*\(/.test(content)) {
+        cookieFiles.push(fp);
+      }
     }
-  }
-  if (cookieFiles.length > 0) {
-    surfaces.push({
-      kind: 'cookie-session',
-      description: 'HTTP cookies / sessions (request-scoped, set on responses).',
-      files: cookieFiles.slice(0, 5),
-    });
+    if (cookieFiles.length > 0) {
+      surfaces.push({
+        kind: 'cookie-session',
+        description: 'HTTP cookies / sessions (request-scoped, set on responses).',
+        files: cookieFiles.slice(0, 5),
+      });
+    }
   }
 
   // 6. Env-driven config (already analyzed)
@@ -628,9 +716,16 @@ export function detectLifecycleEvents(input: {
     });
   }
 
-  // 5. Scheduled tasks (cron)
+  // 5. Scheduled tasks (cron). Require an explicit cron decorator or a known
+  // scheduler library. `setInterval()` is intentionally NOT counted — it
+  // produces too many false positives from UI polling in React components,
+  // retry timers, debouncers, etc. If the user wants those, they belong
+  // under "Where State Lives → timers", not under platform-level lifecycle.
   for (const [fp, content] of input.contentMap) {
-    if (/@Cron\(|node-cron|cron\.schedule|setInterval\(/.test(content)) {
+    // skip frontend files outright — scheduled jobs in JSX are almost always
+    // setInterval-driven UI polling, not background jobs.
+    if (/\.(tsx|jsx)$/.test(fp)) continue;
+    if (/@Cron\s*\(/.test(content) || /from\s+['"]node-cron['"]/.test(content) || /\bcron\.schedule\s*\(/.test(content) || /from\s+['"]@nestjs\/schedule['"]/.test(content)) {
       const cronMatch = content.match(/@Cron\(['"]([^'"]+)['"]\)/);
       events.push({
         kind: 'scheduled',
@@ -666,45 +761,37 @@ export function inferAntiPurposes(input: {
   databases: DatabaseConnection[];
   externalServices: ExternalService[];
   contentMap: Map<string, string>;
+  capabilities?: import('../types').CapabilitySet;
+  projectKind?: import('../types').ProjectKind;
 }): AntiPurpose[] {
   const out: AntiPurpose[] = [];
+  const cap = input.capabilities;
 
-  // No frontend
-  const hasReact = [...input.files.keys()].some((f) => /\.(tsx|jsx)$/.test(f));
-  const hasFrontendFolder = ['client', 'frontend', 'web', 'ui'].some((d) =>
-    fs.existsSync(path.join(input.rootDir, d)),
-  );
-  if (!hasReact && !hasFrontendFolder) {
-    out.push({
-      notInScope: 'No frontend in this repo',
-      reason: 'No .tsx/.jsx files and no client/frontend/web/ui folder.',
-    });
-  }
-
-  // No background workers / queues
-  let hasQueue = false;
-  for (const [, content] of input.contentMap) {
-    if (/bull|bullmq|kafka|rabbitmq|amqplib|sqs|pubsub|kue|agenda/i.test(content)) {
-      hasQueue = true;
-      break;
+  // No frontend — only assert when we definitively didn't find one.
+  if (cap ? !cap.hasFrontend : true) {
+    const hasReact = [...input.files.keys()].some((f) => /\.(tsx|jsx)$/.test(f));
+    const hasFrontendFolder = ['client', 'frontend', 'web', 'ui'].some((d) =>
+      fs.existsSync(path.join(input.rootDir, d)),
+    );
+    if (!hasReact && !hasFrontendFolder) {
+      out.push({
+        notInScope: 'No frontend in this repo',
+        reason: 'No .tsx/.jsx files and no client/frontend/web/ui folder.',
+      });
     }
   }
-  if (!hasQueue) {
+
+  // No background workers / queues — read from capabilities so it stays
+  // consistent with the positive detection.
+  if (cap && !cap.hasBackgroundJobs) {
     out.push({
       notInScope: 'No background job queue',
-      reason: 'No bull/kafka/rabbitmq/sqs imports detected.',
+      reason: 'No bull/bullmq/kafkajs/amqplib/SQS client imports detected.',
     });
   }
 
   // No file uploads
-  let hasUpload = false;
-  for (const [, content] of input.contentMap) {
-    if (/multer|busboy|formidable|@nestjs\/platform-express.*FileInterceptor|@UploadedFile/.test(content)) {
-      hasUpload = true;
-      break;
-    }
-  }
-  if (!hasUpload) {
+  if (cap && !cap.hasFileUploads) {
     out.push({
       notInScope: 'No file uploads',
       reason: 'No multer/busboy/formidable/FileInterceptor usage detected.',
@@ -712,23 +799,17 @@ export function inferAntiPurposes(input: {
   }
 
   // No payment processing
-  const hasPayment = input.externalServices.some((s) => /stripe|paypal|braintree|square|razorpay/i.test(s.label));
-  if (!hasPayment) {
+  if (cap && !cap.hasPayments) {
     out.push({
       notInScope: 'No payment processing',
-      reason: 'No payment-provider integration detected.',
+      reason: 'No payment-provider SDK or service detected.',
     });
   }
 
-  // No multi-region replication
-  let hasMultiRegion = false;
-  for (const [, content] of input.contentMap) {
-    if (/REGION|region.*=.*['"](us-|eu-|ap-)/.test(content) && /(secondary|replica|multi[-_]?region)/i.test(content)) {
-      hasMultiRegion = true;
-      break;
-    }
-  }
-  if (!hasMultiRegion) {
+  // No multi-region replication — only emit for cloud-deployed services.
+  // It's noise on a CLI / static site / library.
+  const deployableKind = !input.projectKind || ['backend-server', 'lambda', 'fullstack'].includes(input.projectKind);
+  if (deployableKind && cap && !cap.hasMultiRegion) {
     out.push({
       notInScope: 'Single-region deployment (no multi-region replication detected)',
       reason: 'No explicit multi-region configuration found.',

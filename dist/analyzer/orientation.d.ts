@@ -13,6 +13,7 @@ export declare function buildStateMap(input: {
     asts: Map<string, ASTFile | null>;
     contentMap: Map<string, string>;
     rootDir: string;
+    packageDeps?: Set<string>;
 }): StateSurface[];
 export declare function detectConventions(input: {
     subsystems: Subsystem[];
@@ -52,5 +53,7 @@ export declare function inferAntiPurposes(input: {
     databases: DatabaseConnection[];
     externalServices: ExternalService[];
     contentMap: Map<string, string>;
+    capabilities?: import('../types').CapabilitySet;
+    projectKind?: import('../types').ProjectKind;
 }): AntiPurpose[];
 //# sourceMappingURL=orientation.d.ts.map

@@ -60,6 +60,10 @@ const IGNORE_PATTERNS = [
     '**/vendor/**',
     '**/*.min.js',
     '**/*.bundle.js',
+    // Tool/runtime config files frequently contain `process.env.X` references
+    // but don't represent application logic — keep them out of the file graph.
+    '**/dev-docker-related/**',
+    '**/.serverless/**',
 ];
 function discoverFiles(rootDir) {
     const pattern = path.join('**', EXTENSIONS);

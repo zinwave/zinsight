@@ -1,6 +1,35 @@
 import * as path from 'path';
 import type { FileNode, Subsystem } from '../types';
 
+// Directory names that are operational/supporting, not domain features.
+// Used by the renderer to demote them to a "Operational code" footnote
+// instead of rendering them alongside real feature modules in the
+// architecture diagram and modules table.
+export const PERIPHERAL_DIRS = new Set([
+  'scripts',
+  'script',
+  'migrations',
+  'migration',
+  'seeds',
+  'seed',
+  'fixtures',
+  'fixture',
+  'tools',
+  'tooling',
+  'bin',
+  'examples',
+  'example',
+  'samples',
+  'demo',
+  'demos',
+  'dev-docker-related',
+  'docker',
+]);
+
+export function isPeripheralModule(name: string): boolean {
+  return PERIPHERAL_DIRS.has(name.toLowerCase());
+}
+
 export function detectSubsystems(files: Map<string, FileNode>): Subsystem[] {
   // Group files by their top-level directory
   const groups = new Map<string, string[]>();
