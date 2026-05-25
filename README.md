@@ -32,20 +32,21 @@ zinsight answers those questions in one command, by **statically analysing the c
 
 A single `ARCHITECTURE.md` with sections like:
 
-- **In one paragraph** — what the app actually does, derived from real code
+- **In one paragraph** — what the app actually does, derived from real code, labelled by project kind (CLI / library / static-site / frontend / backend API / **AWS Lambda service** / fullstack)
 - **At a Glance** — mini diagram of inbound/outbound traffic + state
 - **Core Concepts** — domain glossary (entities, services, roles)
-- **Walking Through One Request** — happy-path trace of a representative endpoint
-- **Where State Lives** — DB / cache / KVS / cookies / env / FS
+- **Walking Through One Request** — happy-path trace of a representative endpoint *(only emitted for non-trivial server-like projects)*
+- **Where State Lives** — DB / cache / KVS / cookies / env / FS *(gated on declared dependencies — no false-positive Redis or session entries)*
 - **Conventions** — implicit rules with evidence ("All routes have guards or @Public")
-- **External Contracts** — what we call out, who calls in, with what auth
+- **External Contracts** — what we call out, who calls in, with what auth *(AST-only call-site detection — image CDNs / share links / doc URLs no longer pollute the list)*
 - **Lifecycle** — boot, request flow, install/uninstall, webhooks, cron
 - **How to Get Productive** — scenario-based reading paths ("Understand the request lifecycle in 15 min")
-- **Where to Look** — concept-to-file map ("Auth? Database? AI? Config?")
-- **What This Repo Isn't** — anti-purpose statements
-- **Frontend at a Glance** — React Router routes, components, state stores, styling
+- **Where to Look** — concept-to-file map ("Auth? Database? AI? Config?") with segment-aware path matching and AST-aware content scoping
+- **What This Repo Isn't** — anti-purpose statements, **reconciled with the positive capability set so the same doc never contradicts itself**
+- **Frontend at a Glance** — React Router routes (nested route paths preserved as `/app/dashboards`, not flattened), components, state stores, styling
+- **Operational Code** — `scripts/`, `migrations/`, `seeds/`, `fixtures/`, `tools/` shown separately from feature modules
 - **Hotspots** — most-changed files (last 180 days, from git log)
-- **Required vs Optional config** — env vars with risk-if-missing hints
+- **Required vs Optional config** — env vars with risk-if-missing hints. **Hardcoded credentials in `||` fallbacks are auto-redacted** so secrets never leak into the doc.
 - Plus: data model ER diagram, full route list, modules table, tech stack, dependency graph
 
 ### Sample output (excerpt)
@@ -96,9 +97,14 @@ npx zinsight ./my-project
 
 # Custom output path
 npx zinsight --output docs/ARCHITECTURE.md
+
+# Override the project title (otherwise inferred from folder / package.json)
+npx zinsight --name "My Project"
 ```
 
 That's it. No install. No login. No keys.
+
+> 💡 If your repo puts code under `code/`, `src/`, `app/`, `backend/`, `frontend/`, etc. (AWS SAM convention, common monorepo layouts), zinsight auto-descends one level. You'll see `ℹ Descended into project root: ./code` when it does.
 
 ## How does it compare?
 
@@ -139,6 +145,7 @@ Options:
   -V, --version              Output the version number
   -o, --output <path>        Output file path (default: ARCHITECTURE.md)
   -r, --root <path>          Project root directory (alias for [directory])
+  -n, --name <name>          Override project name in the generated doc
   -h, --help                 Show help
 ```
 
@@ -176,31 +183,33 @@ See [GITHUB_ACTION.md](GITHUB_ACTION.md) for full setup, advanced options, and P
 
 ## What it analyses
 
-zinsight currently understands JavaScript and TypeScript codebases (`.js`, `.jsx`, `.ts`, `.tsx`). It detects:
+zinsight parses JavaScript and TypeScript codebases (`.js`, `.jsx`, `.ts`, `.tsx`). It detects:
 
 - **Frameworks**: NestJS, Express, Fastify, Koa, Hono, Polka, Restify, React, Next.js, Remix, Vue, Svelte, Vite
+- **Project kinds**: CLI, library, static site, frontend, backend server, **AWS Lambda** (SAM `template.yaml` / Serverless Framework `serverless.yml`), full-stack — used to gate sections that don't apply
 - **Databases**: MongoDB (Mongoose), PostgreSQL, MySQL, SQLite, Redis, DynamoDB
-- **Routers**: Express-style, NestJS decorators, Fastify route(), React Router, Next App Router, Next Pages Router
+- **Routers**: Express-style, NestJS decorators, Fastify route(), React Router (with nested-route ancestry), Next App Router, Next Pages Router
 - **State stores**: Zustand, Redux Toolkit, React Context, Jotai, Recoil, MobX
 - **Styling**: Tailwind, styled-components, Emotion, CSS Modules, SCSS, Vanilla Extract, Stitches
-- **External services**: Stripe, Slack, Zoom, GitHub, OpenAI, Anthropic, Google, Atlassian, Sentry, AWS, Firebase, and more
-- **Deployment**: Dockerfile, docker-compose, GitHub Actions, GitLab CI, Kubernetes manifests, Vercel/Netlify/Render configs
+- **External services** (AST-only call-site detection): Stripe, Slack, Zoom, GitHub, Atlassian, Sentry, AWS, Firebase, and more
+- **AI / LLM providers**: OpenAI, Anthropic (`@anthropic-ai/sdk`), Google Gemini, Cohere, Mistral, OpenRouter, Groq, Together AI, Hugging Face, Ollama
+- **Deployment**: Dockerfile, docker-compose, GitHub Actions, GitLab CI, Kubernetes manifests, Vercel/Netlify/Render configs, AWS SAM, Serverless Framework
 - **Testing**: Jest, Vitest, Mocha, Cypress, Playwright
 
-Python, Go, and Rust support is on the roadmap.
+### Non-JS/TS projects
+
+PHP / Composer, Python (`pyproject.toml`, `requirements.txt`), Go (`go.mod`), Java (Maven / Gradle), Ruby (Gemfile), Rust (Cargo), and Terraform projects are **detected and labelled honestly** — zinsight emits a clear banner in the generated doc explaining the application-level sections will be empty by design, instead of falsely claiming "built with Node.js" because a stub `package.json` exists. Native parsers for these languages are on the roadmap.
 
 ## FAQ
 
 **Does it send my code anywhere?**
 No. zinsight is a CLI tool that runs entirely on your machine. No network calls, no telemetry, no signup, no API keys. The only thing it touches outside your repo is git (to read commit history for the Hotspots section).
 
-**Why does [Socket](https://socket.dev/npm/package/zinsight) flag "Network access" and "Shell access" on this package?**
-Those flags surface *capability* (the code *can* call shell / network), not malicious behaviour, and they come from transitive dependencies — not zinsight itself. Specifically:
+**Could the generated doc accidentally leak secrets?**
+No. As of 1.1.0, hardcoded credential fallbacks in env-var reads are auto-redacted before they're written to the doc. Values like `process.env.MONGO_URI || 'mongodb+srv://user:pass@…'` are rendered as `<redacted>`. The redactor covers variables with secret-y names (`*SECRET*`, `*PASSWORD*`, `*API_KEY*`, `*TOKEN*`, `*PRIVATE_KEY*`, `*CREDENTIALS*`, `*DSN*`, `*CONNECTION_STRING*`), URLs with embedded credentials (`scheme://user:pass@host`), and known credential token shapes (`sk-`, `ghp_`, `xox[bp]-`, AWS `AKIA…`).
 
-- **Shell access** — triggered by `glob` (a runtime dep for finding source files), which uses `cross-spawn` under the hood to invoke `git` when expanding patterns on some platforms.
-- **Network access** — triggered by a transitive devDep that ships type definitions or build tooling. zinsight's own code makes zero network calls; you can verify by running it offline.
-
-zinsight's own source is auditable — no `child_process`, no `http`/`https`, no `fetch`. If the Socket flags concern you, fork the repo and run with `npm ci --omit=dev` plus `node --frozen-intrinsics dist/cli/index.js <path>` to confirm. We're tracking dep replacements that would eliminate these flags entirely (see [CHANGELOG.md](CHANGELOG.md)).
+**Why does [Socket](https://socket.dev/npm/package/zinsight) flag "Shell access" / "Network access" on this package?**
+Those flags surface *capability* (a dependency *can* call shell / network), not malicious behaviour. Resolved in 1.0.0 by swapping `glob` for `fast-glob` — see the [1.0.0 entry in the changelog](CHANGELOG.md). zinsight's own source contains no `child_process`, no `http`/`https`, no `fetch`. You can audit by running it offline.
 
 **Why no AI?**
 Three reasons: (1) determinism — same input always produces the same output; (2) speed — runs in seconds not minutes; (3) it works in environments where LLM tools are blocked or impossible (regulated industries, air-gapped networks, on-call from a plane).
@@ -211,8 +220,11 @@ Not built in by default — see "Why no AI" above. We may add an opt-in `--story
 **Does it work on monorepos?**
 Yes. zinsight detects nested `package.json` files in `static/`, `apps/`, `packages/`, `frontend/`, `client/`, `web/`, `ui/` (one level deep). Run it at the monorepo root.
 
+**My repo puts the code under `code/` (AWS SAM convention) — do I need to `cd` in?**
+No. zinsight auto-descends one level when the directory it's pointed at has no analyzable code but a single obvious child does (`code/`, `src/`, `app/`, `server/`, `backend/`, `frontend/`, `client/`, `ui/`, `web/`). You'll see `ℹ Descended into project root: ./code` printed when this happens.
+
 **My repo isn't JavaScript / TypeScript — does this work?**
-Not yet. JS/TS only at the moment. Python, Go, and Rust are on the roadmap.
+zinsight only parses JS/TS today, but as of 1.1.0 it **honestly identifies** PHP / Composer, Python (`pyproject.toml`, `requirements.txt`), Go (`go.mod`), Java (Maven/Gradle), Ruby, Rust, and Terraform projects. It emits a yellow CLI warning + a banner at the top of the generated doc explaining the application-level sections are empty by design — instead of mislabelling the project as Node.js. Native parsers are on the roadmap.
 
 **Will it overwrite my hand-written `ARCHITECTURE.md`?**
 By default, yes — it writes to `ARCHITECTURE.md`. Use `--output docs/zinsight.md` (or any other path) to keep them separate.
@@ -238,7 +250,7 @@ PRs welcome. Best ways to help:
 
 - Open an issue with a repo that produces a bad / unhelpful doc (with a small repro if possible)
 - Add detection for a framework / library / pattern you use that zinsight misses
-- Add a language analyzer (Python, Go, Rust)
+- Add a language analyzer (PHP, Python, Go, Rust, Java, Ruby, Terraform — all detected today, none parsed)
 - Improve the markdown rendering for any section
 
 Local dev:
