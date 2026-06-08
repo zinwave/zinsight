@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { File as ASTFile } from '@babel/types';
-import type { AnalysisResult, CapabilitySet, FileNode, Language, ProjectInfo, ProjectKind, RiskArea, ParseResult, RouteEndpoint, DatabaseConnection, ExternalService, DeploymentInfo, FrontendInfo, LifecycleEvent } from '../types';
+import type { AnalysisResult, CapabilitySet, FileNode, IaCInfo, Language, ProjectInfo, ProjectKind, RiskArea, ParseResult, RouteEndpoint, DatabaseConnection, ExternalService, DeploymentInfo, FrontendInfo, LifecycleEvent } from '../types';
 import { discoverFiles } from './file-discovery';
 import { parseFile } from './parser';
 import { buildDependencyGraph } from './dependency-graph';
@@ -14,6 +14,7 @@ import { detectExternalServices } from './external-services';
 import { detectRoutes } from './routes';
 import { detectTechStack, getAllDeps } from './tech-stack';
 import { detectDeployment } from './deployment';
+import { detectIaC } from './iac';
 import { detectSwagger } from './swagger';
 import { detectDocs } from './docs';
 import { detectGitHeatmap } from './git-heatmap';
@@ -141,6 +142,13 @@ export function analyze(rootDir: string, onProgress?: ProgressCallback, options:
   log('Scanning for deployment configuration...');
   const deployment = detectDeployment(rootDir);
 
+  // 14.5 Detect Infrastructure-as-Code (Terraform, CloudFormation, SAM, CDK,
+  //      Serverless, Pulumi, Bicep, ARM, Helm). Uses filename match plus a
+  //      content sniff for ambiguously-named yaml/json so CloudFormation
+  //      templates aren't missed when not named template.yaml.
+  log('Scanning for Infrastructure-as-Code...');
+  const iac = detectIaC(rootDir);
+
   // 15. Detect Swagger/OpenAPI
   log('Checking for API documentation specs...');
   const swagger = detectSwagger(rootDir, astMap);
@@ -243,6 +251,7 @@ export function analyze(rootDir: string, onProgress?: ProgressCallback, options:
     routes,
     frontend,
     deployment,
+    iac,
     entryPoints,
     techStack,
   });
@@ -271,6 +280,7 @@ export function analyze(rootDir: string, onProgress?: ProgressCallback, options:
     externalServices,
     contentMap,
     deployment,
+    iac,
     lifecycleEvents,
     rootDir,
     files: fileNodes,
@@ -309,6 +319,7 @@ export function analyze(rootDir: string, onProgress?: ProgressCallback, options:
     routes,
     techStack,
     deployment,
+    iac,
     docs,
     swagger,
     gitHeatmap,
@@ -505,19 +516,28 @@ function detectProjectKind(input: {
   routes: RouteEndpoint[];
   frontend: FrontendInfo;
   deployment: DeploymentInfo;
+  iac: IaCInfo;
   entryPoints: { label: string; filePath: string }[];
   techStack: { frameworks: string[] };
 }): ProjectKind {
-  const { rootDir, files, frontend, routes, deployment, entryPoints } = input;
+  const { rootDir, files, frontend, routes, deployment, iac, entryPoints } = input;
 
-  // Lambda — SAM / Serverless Framework manifest in the repo
-  const hasSamTemplate = fs.existsSync(path.join(rootDir, 'template.yaml')) || fs.existsSync(path.join(rootDir, 'template.yml'));
-  const hasServerlessYml = fs.existsSync(path.join(rootDir, 'serverless.yml')) || fs.existsSync(path.join(rootDir, 'serverless.yaml'));
-  // Also handle the case where these live one level up (cimpress code/ layout)
+  // Lambda — only if a SAM / Serverless manifest is at the repo root (or in
+  // the parent dir, to handle the cimpress `code/` layout). IaC files buried
+  // deeper in the tree are common in monorepos with a single lambda sub-app,
+  // and would mis-label the whole repo as a Lambda service.
+  const lambdaTools = new Set<string>(['aws-sam', 'aws-serverless-framework']);
+  const isRootLambdaIaC = iac.files.some(f =>
+    lambdaTools.has(f.tool) && !f.path.includes('/') && !f.path.includes('\\')
+  );
   const parent = path.dirname(rootDir);
-  const hasSamParent = parent !== rootDir && (fs.existsSync(path.join(parent, 'template.yaml')) || fs.existsSync(path.join(parent, 'template.yml')));
-  const hasSlsParent = parent !== rootDir && (fs.existsSync(path.join(parent, 'serverless.yml')) || fs.existsSync(path.join(parent, 'serverless.yaml')));
-  const isLambda = hasSamTemplate || hasServerlessYml || hasSamParent || hasSlsParent;
+  const hasLambdaParent = parent !== rootDir && (
+    fs.existsSync(path.join(parent, 'template.yaml')) ||
+    fs.existsSync(path.join(parent, 'template.yml')) ||
+    fs.existsSync(path.join(parent, 'serverless.yml')) ||
+    fs.existsSync(path.join(parent, 'serverless.yaml'))
+  );
+  const isLambda = isRootLambdaIaC || hasLambdaParent;
 
   if (isLambda && routes.length > 0) return 'lambda';
 
@@ -569,6 +589,7 @@ function computeCapabilities(input: {
   externalServices: ExternalService[];
   contentMap: Map<string, string>;
   deployment: DeploymentInfo;
+  iac: IaCInfo;
   lifecycleEvents: LifecycleEvent[];
   rootDir: string;
   files: Map<string, FileNode>;
@@ -697,15 +718,8 @@ function computeCapabilities(input: {
     hasEmailNotifications,
     hasCaching,
     hasMultiRegion,
-    hasLambdaTriggers: hasLambdaManifest(input.rootDir),
+    hasIaC: input.iac.detected,
   };
-}
-
-function hasLambdaManifest(rootDir: string): boolean {
-  const here = (n: string) => fs.existsSync(path.join(rootDir, n));
-  const up = (n: string) => fs.existsSync(path.join(path.dirname(rootDir), n));
-  return here('template.yaml') || here('template.yml') || here('serverless.yml') || here('serverless.yaml')
-      || up('template.yaml') || up('template.yml') || up('serverless.yml') || up('serverless.yaml');
 }
 
 function computeRiskAreas(files: Map<string, import('../types').FileNode>): RiskArea[] {

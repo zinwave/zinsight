@@ -48,6 +48,7 @@ const external_services_1 = require("./external-services");
 const routes_1 = require("./routes");
 const tech_stack_1 = require("./tech-stack");
 const deployment_1 = require("./deployment");
+const iac_1 = require("./iac");
 const swagger_1 = require("./swagger");
 const docs_1 = require("./docs");
 const git_heatmap_1 = require("./git-heatmap");
@@ -144,6 +145,12 @@ function analyze(rootDir, onProgress, options = {}) {
     // 14. Detect deployment info (Dockerfiles, docker-compose, CI/CD, k8s)
     log('Scanning for deployment configuration...');
     const deployment = (0, deployment_1.detectDeployment)(rootDir);
+    // 14.5 Detect Infrastructure-as-Code (Terraform, CloudFormation, SAM, CDK,
+    //      Serverless, Pulumi, Bicep, ARM, Helm). Uses filename match plus a
+    //      content sniff for ambiguously-named yaml/json so CloudFormation
+    //      templates aren't missed when not named template.yaml.
+    log('Scanning for Infrastructure-as-Code...');
+    const iac = (0, iac_1.detectIaC)(rootDir);
     // 15. Detect Swagger/OpenAPI
     log('Checking for API documentation specs...');
     const swagger = (0, swagger_1.detectSwagger)(rootDir, astMap);
@@ -233,6 +240,7 @@ function analyze(rootDir, onProgress, options = {}) {
         routes,
         frontend,
         deployment,
+        iac,
         entryPoints,
         techStack,
     });
@@ -258,6 +266,7 @@ function analyze(rootDir, onProgress, options = {}) {
         externalServices,
         contentMap,
         deployment,
+        iac,
         lifecycleEvents,
         rootDir,
         files: fileNodes,
@@ -292,6 +301,7 @@ function analyze(rootDir, onProgress, options = {}) {
         routes,
         techStack,
         deployment,
+        iac,
         docs,
         swagger,
         gitHeatmap,
@@ -496,15 +506,19 @@ function detectLanguage(rootDir) {
  * `unknown` so downstream gating leaves sections in.
  */
 function detectProjectKind(input) {
-    const { rootDir, files, frontend, routes, deployment, entryPoints } = input;
-    // Lambda — SAM / Serverless Framework manifest in the repo
-    const hasSamTemplate = fs.existsSync(path.join(rootDir, 'template.yaml')) || fs.existsSync(path.join(rootDir, 'template.yml'));
-    const hasServerlessYml = fs.existsSync(path.join(rootDir, 'serverless.yml')) || fs.existsSync(path.join(rootDir, 'serverless.yaml'));
-    // Also handle the case where these live one level up (cimpress code/ layout)
+    const { rootDir, files, frontend, routes, deployment, iac, entryPoints } = input;
+    // Lambda — only if a SAM / Serverless manifest is at the repo root (or in
+    // the parent dir, to handle the cimpress `code/` layout). IaC files buried
+    // deeper in the tree are common in monorepos with a single lambda sub-app,
+    // and would mis-label the whole repo as a Lambda service.
+    const lambdaTools = new Set(['aws-sam', 'aws-serverless-framework']);
+    const isRootLambdaIaC = iac.files.some(f => lambdaTools.has(f.tool) && !f.path.includes('/') && !f.path.includes('\\'));
     const parent = path.dirname(rootDir);
-    const hasSamParent = parent !== rootDir && (fs.existsSync(path.join(parent, 'template.yaml')) || fs.existsSync(path.join(parent, 'template.yml')));
-    const hasSlsParent = parent !== rootDir && (fs.existsSync(path.join(parent, 'serverless.yml')) || fs.existsSync(path.join(parent, 'serverless.yaml')));
-    const isLambda = hasSamTemplate || hasServerlessYml || hasSamParent || hasSlsParent;
+    const hasLambdaParent = parent !== rootDir && (fs.existsSync(path.join(parent, 'template.yaml')) ||
+        fs.existsSync(path.join(parent, 'template.yml')) ||
+        fs.existsSync(path.join(parent, 'serverless.yml')) ||
+        fs.existsSync(path.join(parent, 'serverless.yaml')));
+    const isLambda = isRootLambdaIaC || hasLambdaParent;
     if (isLambda && routes.length > 0)
         return 'lambda';
     // CLI — package.json declares `bin` and entry-points include a bin file
@@ -652,14 +666,8 @@ function computeCapabilities(input) {
         hasEmailNotifications,
         hasCaching,
         hasMultiRegion,
-        hasLambdaTriggers: hasLambdaManifest(input.rootDir),
+        hasIaC: input.iac.detected,
     };
-}
-function hasLambdaManifest(rootDir) {
-    const here = (n) => fs.existsSync(path.join(rootDir, n));
-    const up = (n) => fs.existsSync(path.join(path.dirname(rootDir), n));
-    return here('template.yaml') || here('template.yml') || here('serverless.yml') || here('serverless.yaml')
-        || up('template.yaml') || up('template.yml') || up('serverless.yml') || up('serverless.yaml');
 }
 function computeRiskAreas(files) {
     const risks = [];

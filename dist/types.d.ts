@@ -36,7 +36,7 @@ export interface CapabilitySet {
     hasEmailNotifications: boolean;
     hasCaching: boolean;
     hasMultiRegion: boolean;
-    hasLambdaTriggers: boolean;
+    hasIaC: boolean;
 }
 export interface EntryPoint {
     label: string;
@@ -157,6 +157,17 @@ export interface DeploymentInfo {
         kind: string;
         name: string;
     }[];
+}
+export type IaCTool = 'aws-sam' | 'aws-cloudformation' | 'aws-cdk' | 'aws-serverless-framework' | 'terraform' | 'pulumi' | 'azure-bicep' | 'azure-arm' | 'helm';
+export interface IaCFile {
+    tool: IaCTool;
+    path: string;
+    notes?: string;
+}
+export interface IaCInfo {
+    detected: boolean;
+    tools: IaCTool[];
+    files: IaCFile[];
 }
 export interface ProjectDoc {
     path: string;
@@ -298,6 +309,7 @@ export interface AnalysisResult {
     routes: RouteEndpoint[];
     techStack: TechStack;
     deployment: DeploymentInfo;
+    iac: IaCInfo;
     docs: ProjectDoc[];
     swagger: SwaggerInfo;
     gitHeatmap: GitHeatmap;

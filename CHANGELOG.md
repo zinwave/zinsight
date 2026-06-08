@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-29
+
+Broadens infrastructure detection beyond the four hardcoded SAM / Serverless
+filenames. zinsight now recognises Terraform, CloudFormation, AWS CDK, Pulumi,
+Azure Bicep, Azure ARM, and Helm in addition to SAM and Serverless Framework,
+and surfaces them in a new section of the generated document.
+
+### Added
+
+- **Infrastructure-as-Code detection** across nine tools: AWS SAM, AWS
+  CloudFormation, AWS CDK, Serverless Framework, Terraform, Pulumi,
+  Azure Bicep, Azure ARM, and Helm. Two-pass detector — filename /
+  extension match (`*.tf`, `*.tfvars`, `.terraform.lock.hcl`, `*.bicep`,
+  `Pulumi*.yaml`, `cdk.json`, `serverless.yml`, `Chart.yaml`) plus a
+  content sniff that opens the first 4 KB of conventional yaml/json
+  candidates under `infra/`, `infrastructure/`, `deploy/`,
+  `cloudformation/`, `sam/`, `arm/`, `azure/` and looks for signature
+  keys (`AWSTemplateFormatVersion`, `Transform: AWS::Serverless`,
+  `$schema: …deploymentTemplate…`). CloudFormation templates no longer
+  have to be named `template.yaml` to be detected.
+- **`### Infrastructure as Code` subsection** in the generated
+  `## Deployment` section. Lists detected tools and the underlying files
+  (capped at 10 per tool with a "…and N more" footer).
+
+### Changed
+
+- **Lambda project-kind detection broadened, but root-anchored.** The
+  `lambda` project kind no longer relies on four hardcoded filename
+  checks. It now reads from the new IaC detector and fires when a
+  SAM / Serverless manifest is detected at the *repo root* (or one
+  level up, to preserve the existing `code/` layout support). Manifests
+  buried under monorepo sub-apps no longer mis-label the whole repo as
+  a Lambda service.
+- **`CapabilitySet.hasLambdaTriggers` → `CapabilitySet.hasIaC`.** The
+  old flag was dead-code (set, never read) and AWS-specific. The new
+  flag fires for any detected IaC tool.
+
 ## [1.1.0] - 2026-05-24
 
 Hardening release. Closes every P0 trust/safety issue and most P0.5 / P1 correctness issues surfaced after running zinsight across a 48-repo corpus (mixed NestJS, Express, React/Vite, AWS Lambda, PHP/Symfony, Terraform). No breaking changes to the CLI surface or document shape; one new flag, one new banner.
@@ -179,7 +216,8 @@ JS/TS codebases producing `ARCHITECTURE.md` with Mermaid diagrams, API
 endpoint extraction, database schema detection, external integration
 mapping, and code-health signals.
 
-[Unreleased]: https://github.com/zinwave/zinsight/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/zinwave/zinsight/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/zinwave/zinsight/releases/tag/v1.2.0
 [1.1.0]: https://github.com/zinwave/zinsight/releases/tag/v1.1.0
 [1.0.0]: https://github.com/zinwave/zinsight/releases/tag/v1.0.0
 [0.10.0]: https://github.com/zinwave/zinsight/releases/tag/v0.10.0

@@ -6,6 +6,7 @@ import type {
   RouteEndpoint,
   TechStack,
   DeploymentInfo,
+  IaCInfo,
   ProjectDoc,
   SwaggerInfo,
   ModelSchema,
@@ -25,16 +26,17 @@ import type {
   ConceptLocation,
   EnvVarMaturity,
 } from '../types';
+import { iacToolLabel } from '../analyzer/iac';
 
 export function generateMarkdown(result: AnalysisResult): string {
   const lines: string[] = [];
   const { project, stats, entryPoints, subsystems, contracts, riskAreas, files,
-          databases, externalServices, routes, techStack, deployment, docs, swagger,
+          databases, externalServices, routes, techStack, deployment, iac, docs, swagger,
           gitHeatmap, glossary, happyPath, folderPurposes, stateSurfaces, conventions,
           readingPaths, externalContracts, lifecycleEvents, antiPurposes, frontend,
           whereToLook, envMaturity } = result;
 
-  const hasDeployment = deployment.dockerfiles.length > 0 || deployment.composeServices.length > 0 || deployment.ciPipelines.length > 0 || deployment.k8sResources.length > 0;
+  const hasDeployment = deployment.dockerfiles.length > 0 || deployment.composeServices.length > 0 || deployment.ciPipelines.length > 0 || deployment.k8sResources.length > 0 || iac.detected;
   const envContracts = contracts.filter(c => c.type === 'env-var');
 
   // ─── Header ───
@@ -498,7 +500,7 @@ export function generateMarkdown(result: AnalysisResult): string {
   if (hasDeployment) {
     lines.push('## Deployment');
     lines.push('');
-    renderDeploymentSection(lines, deployment);
+    renderDeploymentSection(lines, deployment, iac);
   }
 
   // ─── Environment Variables ───
@@ -2658,7 +2660,7 @@ function sanitizeMermaidType(type: string): string {
 
 // ─── Deployment Section ───
 
-function renderDeploymentSection(lines: string[], deployment: DeploymentInfo): void {
+function renderDeploymentSection(lines: string[], deployment: DeploymentInfo, iac: IaCInfo): void {
   // Dockerfiles
   if (deployment.dockerfiles.length > 0) {
     lines.push('### Docker');
@@ -2739,6 +2741,38 @@ function renderDeploymentSection(lines: string[], deployment: DeploymentInfo): v
     lines.push('|------|------|------|');
     for (const res of deployment.k8sResources) {
       lines.push(`| ${res.kind} | \`${res.name}\` | \`${res.path}\` |`);
+    }
+    lines.push('');
+  }
+
+  // Infrastructure as Code
+  if (iac.detected) {
+    lines.push('### Infrastructure as Code');
+    lines.push('');
+    const toolList = iac.tools.map(iacToolLabel).join(', ');
+    lines.push(`Detected: **${toolList}**`);
+    lines.push('');
+    lines.push('| Tool | File | Notes |');
+    lines.push('|------|------|-------|');
+    // Cap to keep large monorepos readable; we still list every tool because
+    // we sort by tool then path, so each tool gets at least one row.
+    const maxRowsPerTool = 10;
+    const counts = new Map<string, number>();
+    const sorted = [...iac.files].sort((a, b) =>
+      a.tool === b.tool ? a.path.localeCompare(b.path) : a.tool.localeCompare(b.tool)
+    );
+    for (const f of sorted) {
+      const n = counts.get(f.tool) || 0;
+      if (n >= maxRowsPerTool) continue;
+      counts.set(f.tool, n + 1);
+      lines.push(`| ${iacToolLabel(f.tool)} | \`${f.path}\` | ${f.notes || '—'} |`);
+    }
+    // Footer if we truncated
+    for (const [tool, shown] of counts) {
+      const total = iac.files.filter(f => f.tool === tool).length;
+      if (total > shown) {
+        lines.push(`| ${iacToolLabel(tool as import('../types').IaCTool)} | _…and ${total - shown} more_ | |`);
+      }
     }
     lines.push('');
   }
