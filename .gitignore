@@ -33,3 +33,8 @@ yarn-error.log*
 
 # Generated docs that consume zinsight output during testing
 ARCHITECTURE.md.bak
+
+# Internal review/improvement notes (not for the public repo)
+FIXES_APPLIED.md
+ZINSIGHT_IMPROVEMENTS.md
+ZINSIGHT_REVIEW.md

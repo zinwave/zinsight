@@ -1,6 +1,6 @@
 {
   "name": "zinsight",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Instant insight into any codebase. Auto-generate rich architecture docs with Mermaid diagrams, API endpoints, database schemas, external integrations, tech stack detection, and code health analysis. Built for AI-generated codebases.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
